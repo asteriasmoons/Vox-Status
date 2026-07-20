@@ -43,7 +43,7 @@ export const serviceGroups: ServiceGroup[] = [
       { name: "Lunelia", description: "iOS and iPadOS services", status: "operational", uptime: "99.99%" },
       { name: "Lurelia", description: "iOS and iPadOS services", status: "operational", uptime: "99.98%" },
       { name: "Loomey", description: "iOS and iPadOS services", status: "operational", uptime: "99.99%" },
-      { name: "Limily", description: "iOS and iPadOS services", status: "operational", uptime: "99.97%" },
+      { name: "Limily", description: "iOS and iPadOS services", status: "degraded", uptime: "99.97%" },
       { name: "Markly", description: "iOS and iPadOS services", status: "operational", uptime: "99.99%" },
       { name: "Tally", description: "iOS and iPadOS services", status: "operational", uptime: "99.99%" },
       { name: "Project", description: "iOS and iPadOS services", status: "operational", uptime: "99.99%" },
