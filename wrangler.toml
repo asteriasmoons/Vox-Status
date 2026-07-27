@@ -2,6 +2,13 @@ name = "vox-status-page"
 main = "worker/index.ts"
 compatibility_date = "2025-05-01"
 
+# Custom domain. This only works AFTER voxiverse.ink is added as a zone in your
+# Cloudflare account (its nameservers pointed at Cloudflare). Cloudflare creates
+# the DNS record and SSL cert automatically on deploy.
+routes = [
+  { pattern = "status.voxiverse.ink", custom_domain = true }
+]
+
 # Serve the built Vite site as static assets. The Worker runs first only for
 # /api/*, so API calls reach the code above; everything else is served from
 # ./dist with a single-page-application fallback (so /dashboard loads index.html).

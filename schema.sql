@@ -94,11 +94,10 @@ INSERT INTO services (group_id, name, description, status, uptime, sort_order) V
   (2, 'Lunelia', 'iOS and iPadOS services', 'operational', '99.99%', 1),
   (2, 'Lurelia', 'iOS and iPadOS services', 'operational', '99.98%', 2),
   (2, 'Loomey',  'iOS and iPadOS services', 'operational', '99.99%', 3),
-  (2, 'Limily',  'iOS and iPadOS services', 'degraded',    '99.97%', 4),
   (2, 'Markly',  'iOS and iPadOS services', 'operational', '99.99%', 5),
   (2, 'Tally',   'iOS and iPadOS services', 'operational', '99.99%', 6),
-  (2, 'Project', 'iOS and iPadOS services', 'operational', '99.99%', 7),
-  (2, 'Lunely',  'iOS and iPadOS services', 'operational', '99.98%', 8),
+  (2, 'Asterium', 'iOS and iPadOS services', 'operational', '99.99%', 7),
+  (2, 'Seery',    'iOS and iPadOS services', 'operational', '99.99%', 8),
 
   (3, 'Database',           'Application data and persistence',    'operational', '99.99%', 0),
   (3, 'Authentication',     'Account sign-in and sessions',        'operational', '99.99%', 1),
