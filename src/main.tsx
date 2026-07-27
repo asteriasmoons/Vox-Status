@@ -1,15 +1,22 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Check, ChevronDown, Clock3, ExternalLink, ShieldCheck } from "lucide-react";
-import { incidents, serviceGroups, type Incident, type Status } from "./statusData";
+import { Activity, Check, ChevronDown, Clock3, ExternalLink, ShieldCheck, Wrench, AlertTriangle } from "lucide-react";
+import {
+  incidents as fallbackIncidents,
+  serviceGroups as fallbackServiceGroups,
+  type Status,
+} from "./statusData";
+import { getStatus, type Snapshot, type Incident, type Maintenance } from "./api";
+import { Dashboard } from "./Dashboard";
 import "./styles.css";
 
 const statusLabels: Record<Status, string> = {
   operational: "Operational",
+  beta: "Beta",
   degraded: "Degraded Performance",
   partial: "Partial Outage",
   major: "Major Outage",
-  maintenance: "Maintenance"
+  maintenance: "Maintenance",
 };
 
 function statusClass(status: Status) {
@@ -64,9 +71,32 @@ function IncidentCard({ incident }: { incident: Incident }) {
   );
 }
 
-function App() {
+function StatusPage() {
+  const [snapshot, setSnapshot] = React.useState<Snapshot | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let active = true;
+    getStatus()
+      .then((data) => { if (active) setSnapshot(data); })
+      .catch(() => { /* fall back to static data below */ })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  // Use live data when available, otherwise the static snapshot bundled at build time.
+  const serviceGroups = snapshot?.serviceGroups ?? fallbackServiceGroups;
+  const incidents: Incident[] = snapshot?.incidents ?? (fallbackIncidents as unknown as Incident[]);
+  const maintenance: Maintenance[] = snapshot?.maintenance ?? [];
+  const settings = snapshot?.settings ?? {};
+  const supportEmail = settings.support_email || "support@example.com";
+  const heroNote = settings.overall_note || "Live availability for Vox, the Telegram platform, and all nine Vox apps.";
+
   const allStatuses = serviceGroups.flatMap((group) => group.services.map((service) => service.status));
-  const overallStatus: Status = allStatuses.includes("major") ? "major" : allStatuses.includes("partial") ? "partial" : allStatuses.includes("degraded") ? "degraded" : allStatuses.includes("maintenance") ? "maintenance" : "operational";
+  const overallStatus: Status = allStatuses.includes("major") ? "major" : allStatuses.includes("partial") ? "partial" : allStatuses.includes("degraded") ? "degraded" : allStatuses.includes("maintenance") ? "maintenance" : allStatuses.includes("beta") ? "beta" : "operational";
+
+  const activeIncidents = incidents.filter((incident) => incident.state !== "resolved");
+  const upcomingMaintenance = maintenance.filter((m) => m.state !== "completed");
 
   return (
     <main>
@@ -75,16 +105,16 @@ function App() {
           <span className="brand-mark"><Activity size={19} /></span>
           <span>Vox Status</span>
         </a>
-        <a className="support-link" href="mailto:support@example.com">Contact Support <ExternalLink size={15} /></a>
+        <a className="support-link" href={`mailto:${supportEmail}`}>Contact Support <ExternalLink size={15} /></a>
       </header>
 
       <section className="hero" id="top">
         <div className="hero-copy">
-          <div className="overall-icon"><ShieldCheck size={28} /></div>
+          <div className={`overall-icon overall-${overallStatus}`}><ShieldCheck size={28} /></div>
           <h1>{overallStatus === "operational" ? "All systems operational" : statusLabels[overallStatus]}</h1>
-          <p>Live availability for Vox, the Telegram platform, and all nine Vox apps.</p>
+          <p>{heroNote}</p>
         </div>
-        <div className="last-checked"><Clock3 size={16} /> Last checked just now</div>
+        <div className="last-checked"><Clock3 size={16} /> {loading ? "Checking status…" : "Last checked just now"}</div>
       </section>
 
       <section className="uptime-strip" aria-label="90 day uptime">
@@ -111,22 +141,53 @@ function App() {
         </section>
 
         <aside>
-          <div className="side-card current-card">
-            <div className="side-icon"><Check size={18} /></div>
-            <h2>No active incidents</h2>
-            <p>Everything is currently running normally.</p>
-          </div>
+          {activeIncidents.length === 0 ? (
+            <div className="side-card current-card">
+              <div className="side-icon"><Check size={18} /></div>
+              <h2>No active incidents</h2>
+              <p>Everything is currently running normally.</p>
+            </div>
+          ) : (
+            <div className="side-card current-card active">
+              <div className="side-icon warn"><AlertTriangle size={18} /></div>
+              <h2>{activeIncidents.length} active incident{activeIncidents.length > 1 ? "s" : ""}</h2>
+              <div className="incident-list">
+                {activeIncidents.map((incident) => <IncidentCard incident={incident} key={incident.id} />)}
+              </div>
+            </div>
+          )}
 
           <div className="side-card">
             <h2>Incident history</h2>
             <div className="incident-list">
-              {incidents.map((incident) => <IncidentCard incident={incident} key={incident.title} />)}
+              {incidents.length === 0 ? (
+                <p>No incidents reported.</p>
+              ) : (
+                incidents.map((incident) => <IncidentCard incident={incident} key={incident.id} />)
+              )}
             </div>
           </div>
 
           <div className="side-card maintenance-card">
             <h2>Scheduled maintenance</h2>
-            <p>No maintenance is currently scheduled.</p>
+            {upcomingMaintenance.length === 0 ? (
+              <p>No maintenance is currently scheduled.</p>
+            ) : (
+              <div className="maintenance-list">
+                {upcomingMaintenance.map((m) => (
+                  <div className="maintenance-item" key={m.id}>
+                    <div className="maintenance-head">
+                      <Wrench size={14} />
+                      <strong>{m.title}</strong>
+                    </div>
+                    {(m.windowStart || m.windowEnd) && (
+                      <span className="maintenance-window">{[m.windowStart, m.windowEnd].filter(Boolean).join(" → ")}</span>
+                    )}
+                    {m.body && <p>{m.body}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </aside>
       </div>
@@ -134,11 +195,18 @@ function App() {
       <footer>
         <span>© 2026 Vox</span>
         <span>Statuses update automatically through health checks and service heartbeats.</span>
+        <a className="footer-dash-link" href="/dashboard">Dashboard</a>
       </footer>
     </main>
   );
 }
 
+function Root() {
+  // Minimal path-based routing — no router dependency added.
+  const isDashboard = window.location.pathname.replace(/\/+$/, "").startsWith("/dashboard");
+  return isDashboard ? <Dashboard /> : <StatusPage />;
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode><App /></React.StrictMode>
+  <React.StrictMode><Root /></React.StrictMode>
 );

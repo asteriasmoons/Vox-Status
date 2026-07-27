@@ -1,0 +1,103 @@
+/* Vox Status Dashboard — builds on the tokens defined in styles.css */
+
+.dash { width: min(920px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 80px; }
+
+/* --- Auth --- */
+.dash-auth { width: min(420px, calc(100% - 40px)); margin: 0 auto; min-height: 100vh; display: grid; place-items: center; }
+.dash-login { width: 100%; display: flex; flex-direction: column; gap: 14px; padding: 28px; }
+.dash-login .brand-mark { width: 44px; height: 44px; }
+.dash-login h1 { font-size: 22px; margin: 6px 0 0; letter-spacing: -.03em; }
+.dash-login p { margin: 0; color: var(--muted); font-size: 14px; }
+.dash-login input { margin-top: 4px; }
+
+/* --- Loading / empty --- */
+.dash-loading { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 200px; color: var(--muted); }
+.dash-empty { color: var(--muted); font-size: 13px; padding: 16px 4px; }
+.spin { animation: dash-spin 1s linear infinite; }
+@keyframes dash-spin { to { transform: rotate(360deg); } }
+
+/* --- Tabs --- */
+.dash-tabs { display: flex; gap: 6px; margin: 10px 0 22px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+.dash-tab { display: flex; align-items: center; gap: 8px; padding: 10px 15px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s, background .15s; }
+.dash-tab.active { color: #fff; border-color: rgba(159,124,255,.5); background: linear-gradient(135deg, rgba(128,0,254,.18), rgba(0,219,255,.08)); }
+
+/* --- Panels --- */
+.panel { display: flex; flex-direction: column; gap: 24px; }
+.panel-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.panel-header h2 { margin: 0; font-size: 20px; letter-spacing: -.03em; }
+.panel-header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.panel-header-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+
+.dash-group { display: flex; flex-direction: column; gap: 12px; }
+.dash-group-title { margin: 0 3px; font-size: 14px; color: #c4c7d2; letter-spacing: -.01em; }
+.dash-card-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* --- Service rows --- */
+.dash-service { border: 1px solid var(--border); background: var(--surface); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.dash-service-name { display: flex; align-items: center; gap: 12px; }
+.dash-service-name strong { font-size: 15px; }
+.dash-service-name p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.dash-status-row { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.dash-uptime { width: 88px; margin-left: auto; }
+
+.status-chip { padding: 7px 11px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,.03); color: var(--muted); font-size: 12px; font-weight: 650; cursor: pointer; transition: all .15s; }
+.status-chip:hover { border-color: rgba(255,255,255,.2); color: #e7e9f0; }
+.status-chip.on { color: #08090d; font-weight: 750; }
+.status-chip.status-operational.on { background: var(--green); border-color: var(--green); }
+.status-chip.status-degraded.on { background: #ffd66b; border-color: #ffd66b; }
+.status-chip.status-partial.on { background: #ff9a62; border-color: #ff9a62; }
+.status-chip.status-major.on { background: #ff6d85; border-color: #ff6d85; }
+.status-chip.status-maintenance.on { background: var(--cyan); border-color: var(--cyan); }
+.status-chip.status-beta.on { background: var(--purple); border-color: var(--purple); }
+.status-chip.on:not([class*="status-"]) { background: #fff; border-color: #fff; }
+
+.dash-template-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tpl-chip { padding: 6px 11px; border-radius: 999px; border: 1px dashed rgba(159,124,255,.4); background: rgba(159,124,255,.06); color: #c9bcff; font-size: 12px; cursor: pointer; transition: background .15s; }
+.tpl-chip:hover { background: rgba(159,124,255,.14); }
+
+/* --- Buttons --- */
+.dash-btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; border-radius: 11px; border: 1px solid var(--border); background: var(--surface); color: #e7e9f0; font-size: 13px; font-weight: 650; cursor: pointer; transition: all .15s; }
+.dash-btn:hover { border-color: rgba(255,255,255,.22); }
+.dash-btn:disabled { opacity: .5; cursor: not-allowed; }
+.dash-btn.primary { background: linear-gradient(135deg, #8000fe, #00dbff); border: 0; color: #fff; box-shadow: 0 10px 24px rgba(128,0,254,.22); }
+.dash-btn.ghost { background: transparent; }
+.dash-icon-btn { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; transition: all .15s; }
+.dash-icon-btn:hover { color: #fff; border-color: rgba(255,255,255,.22); }
+
+/* --- Forms --- */
+.dash-form { display: flex; flex-direction: column; gap: 14px; padding: 20px; }
+.dash-form label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #c4c7d2; }
+.dash-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+input, textarea, select {
+  width: 100%; box-sizing: border-box; font: inherit; color: #f7f8fb;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; outline: none; transition: border-color .15s;
+}
+input:focus, textarea:focus, select:focus { border-color: rgba(159,124,255,.55); }
+textarea { resize: vertical; }
+.dash-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.dash-error { color: #ff8c78; font-size: 13px; }
+.dash-muted { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+
+.dash-checks { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 4px 0; }
+.dash-check { flex-direction: row !important; align-items: center; gap: 7px !important; font-size: 13px !important; color: #e7e9f0 !important; }
+.dash-check input { width: auto; }
+
+/* --- Incident / maintenance editors --- */
+.dash-incident { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.dash-incident-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.dash-incident-head h3 { margin: 6px 0 4px; font-size: 15px; }
+.dash-incident-head p { margin: 0; font-size: 11px; color: var(--muted); }
+.dash-update-box { border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.dash-template-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 18px; }
+.dash-template-row strong { font-size: 14px; }
+
+/* --- Toast --- */
+.dash-toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; background: #11131a; border: 1px solid rgba(101,230,164,.4); color: var(--green); padding: 11px 16px; border-radius: 12px; font-size: 13px; box-shadow: 0 16px 40px rgba(0,0,0,.5); z-index: 50; }
+
+@media (max-width: 640px) {
+  .dash-form-row { grid-template-columns: 1fr; }
+  .panel-header { flex-direction: column; }
+  .dash-uptime { margin-left: 0; }
+}

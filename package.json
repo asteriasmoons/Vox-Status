@@ -6,7 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:worker": "wrangler dev",
+    "db:create": "wrangler d1 create vox-status",
+    "kv:create": "wrangler kv namespace create SESSIONS",
+    "db:init": "wrangler d1 execute vox-status --remote --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute vox-status --local --file=./schema.sql",
+    "set:password": "wrangler secret put DASHBOARD_PASSWORD",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -14,10 +21,12 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20250501.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wrangler": "^4.14.0"
   }
 }

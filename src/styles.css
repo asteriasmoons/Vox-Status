@@ -49,6 +49,7 @@ h1 { font-size: clamp(38px, 6vw, 66px); line-height: .98; letter-spacing: -.055e
 .status-partial { color: #ff9a62; background-color: #ff9a62; }
 .status-major { color: #ff6d85; background-color: #ff6d85; }
 .status-maintenance { color: var(--cyan); background-color: var(--cyan); }
+.status-beta { color: var(--purple); background-color: var(--purple); }
 .service-main h3 { margin: 0 0 5px; font-size: 15px; }
 .service-main p { margin: 0; color: var(--muted); font-size: 12px; }
 .service-meta { display: flex; align-items: center; gap: 13px; flex: 0 0 auto; }
@@ -97,3 +98,20 @@ footer { min-height: 86px; border-top: 1px solid var(--border); display: flex; j
   .uptime { display: none; }
   footer { align-items: flex-start; flex-direction: column; justify-content: center; }
 }
+
+/* Dynamic states added with the dashboard */
+.overall-icon.overall-degraded { color: #ffd66b; background: rgba(255,214,107,.1); border-color: rgba(255,214,107,.2); }
+.overall-icon.overall-partial { color: #ff9a62; background: rgba(255,154,98,.1); border-color: rgba(255,154,98,.2); }
+.overall-icon.overall-major { color: #ff6d85; background: rgba(255,109,133,.1); border-color: rgba(255,109,133,.2); }
+.overall-icon.overall-maintenance { color: var(--cyan); background: rgba(97,221,244,.1); border-color: rgba(97,221,244,.2); }
+.overall-icon.overall-beta { color: var(--purple); background: rgba(159,124,255,.1); border-color: rgba(159,124,255,.2); }
+.current-card.active { background: linear-gradient(145deg, rgba(255,109,133,.09), rgba(17,19,26,.98) 48%); }
+.side-icon.warn { color: #ff6d85; background: rgba(255,109,133,.12); }
+.maintenance-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.maintenance-item { display: flex; flex-direction: column; gap: 5px; }
+.maintenance-head { display: flex; align-items: center; gap: 8px; color: var(--cyan); }
+.maintenance-head strong { color: #f7f8fb; font-size: 13px; }
+.maintenance-window { color: var(--muted); font-size: 11px; }
+.maintenance-item p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 2px 0 0; }
+.footer-dash-link { color: #5f6470; font-size: 12px; }
+.footer-dash-link:hover { color: #9498a8; }

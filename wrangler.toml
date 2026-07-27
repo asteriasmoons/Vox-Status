@@ -1,0 +1,27 @@
+name = "vox-status-page"
+main = "worker/index.ts"
+compatibility_date = "2025-05-01"
+
+# Serve the built Vite site as static assets. The Worker runs first only for
+# /api/*, so API calls reach the code above; everything else is served from
+# ./dist with a single-page-application fallback (so /dashboard loads index.html).
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+# D1 database — fill database_id after running `npm run db:create`
+# (or it is set automatically when provisioned via the Cloudflare dashboard/MCP).
+[[d1_databases]]
+binding = "DB"
+database_name = "vox-status"
+database_id = "7e540e75-650c-485d-b086-dd3685e29ec8"
+
+# KV namespace for dashboard sessions — fill id after `npm run kv:create`.
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "b6ddfe706a484b429642a3147cfc1d6e"
+
+# DASHBOARD_PASSWORD is a secret, not stored here. Set it with:
+#   npx wrangler secret put DASHBOARD_PASSWORD

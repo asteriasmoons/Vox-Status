@@ -1,4 +1,4 @@
-export type Status = "operational" | "degraded" | "partial" | "major" | "maintenance";
+export type Status = "operational" | "beta" | "degraded" | "partial" | "major" | "maintenance";
 
 export type Service = {
   name: string;
