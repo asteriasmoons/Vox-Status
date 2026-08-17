@@ -101,3 +101,76 @@ textarea { resize: vertical; }
   .panel-header { flex-direction: column; }
   .dash-uptime { margin-left: 0; }
 }
+
+/* --- Telegram publishing --- */
+.tg-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.tg-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 650; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,.03); color: var(--muted); }
+.tg-badge-on  { color: var(--green); border-color: rgba(101,230,164,.4); background: rgba(101,230,164,.08); }
+.tg-badge-off { color: #c4c7d2; }
+.tg-toggle { padding: 6px 11px; font-size: 12px; }
+
+.tg-composer {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.tg-composer-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tg-label { font-size: 12px; font-weight: 700; color: #c9bcff; letter-spacing: .02em; text-transform: uppercase; }
+
+.tg-toolbar {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  padding: 6px; border-radius: 10px;
+  background: rgba(255,255,255,.02); border: 1px solid var(--border);
+}
+.tg-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.tg-tool { display: inline-grid; place-items: center; width: 30px; height: 28px; border-radius: 7px; border: 0; background: transparent; color: #c4c7d2; cursor: pointer; transition: background .12s, color .12s; }
+.tg-tool:hover { background: rgba(255,255,255,.06); color: #fff; }
+.tg-tool-text { width: auto; padding: 0 9px; gap: 5px; font-size: 12px; display: inline-flex; align-items: center; }
+
+.tg-editor {
+  min-height: 120px; max-height: 360px; overflow: auto;
+  padding: 12px 14px; border-radius: 10px;
+  background: #0e1017; border: 1px solid var(--border);
+  color: #f7f8fb; font-size: 14px; line-height: 1.55;
+  outline: none; transition: border-color .15s;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.tg-editor:focus { border-color: rgba(159,124,255,.55); }
+.tg-editor b, .tg-editor strong { font-weight: 700; }
+.tg-editor code { background: rgba(255,255,255,.06); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.tg-editor pre { background: rgba(255,255,255,.05); padding: 8px 10px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; }
+.tg-editor blockquote { border-left: 3px solid rgba(159,124,255,.55); margin: 4px 0; padding: 2px 10px; color: #d4d7e0; }
+.tg-editor a { color: #9fdcff; text-decoration: underline; }
+.tg-editor tg-spoiler, .tg-editor .tg-spoiler { background: #2a2d38; color: #2a2d38; border-radius: 3px; padding: 0 2px; }
+
+.tg-preview { display: flex; flex-direction: column; gap: 6px; }
+.tg-preview-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.tg-preview-bubble {
+  background: #1a1f2e; border: 1px solid var(--border); border-radius: 14px;
+  padding: 10px 14px; color: #eef0f6; font-size: 14px; line-height: 1.55;
+  white-space: pre-wrap; word-wrap: break-word;
+  min-height: 40px;
+}
+.tg-preview-bubble b, .tg-preview-bubble strong { font-weight: 700; }
+.tg-preview-bubble code { background: rgba(255,255,255,.06); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.tg-preview-bubble pre { background: rgba(255,255,255,.05); padding: 8px 10px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; }
+.tg-preview-bubble blockquote { border-left: 3px solid rgba(159,124,255,.55); margin: 4px 0; padding: 2px 10px; color: #d4d7e0; }
+.tg-preview-bubble a { color: #9fdcff; text-decoration: underline; }
+.tg-preview-bubble .tg-spoiler {
+  background: #383c48; color: transparent; border-radius: 3px; padding: 0 3px; cursor: pointer;
+  transition: color .15s;
+}
+.tg-preview-bubble .tg-spoiler:hover { color: #eef0f6; }
+
+.tg-composer-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tg-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tg-count.over { color: #ff8c78; font-weight: 700; }
+.tg-actions { display: flex; gap: 8px; }
+.tg-error { margin-top: 2px; }
+
+@media (max-width: 640px) {
+  .tg-actions { width: 100%; justify-content: flex-end; }
+}

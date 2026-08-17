@@ -38,13 +38,19 @@ CREATE TABLE incidents (
 );
 
 CREATE TABLE incident_updates (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  label       TEXT    NOT NULL,
-  time        TEXT    NOT NULL,
-  message     TEXT    NOT NULL,
-  sort_order  INTEGER NOT NULL DEFAULT 0,
-  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  incident_id          INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+  label                TEXT    NOT NULL,
+  time                 TEXT    NOT NULL,
+  message              TEXT    NOT NULL,
+  sort_order           INTEGER NOT NULL DEFAULT 0,
+  created_at           INTEGER NOT NULL DEFAULT (unixepoch()),
+  -- Telegram publishing (see schema.telegram.sql). Populated when this
+  -- specific update has been composed/sent as its own Telegram post.
+  telegram_html        TEXT,
+  telegram_message_id  INTEGER,
+  telegram_sent_at     INTEGER,
+  telegram_edited_at   INTEGER
 );
 
 CREATE TABLE maintenance (
@@ -135,4 +141,5 @@ INSERT INTO templates (type, name, data) VALUES
 
 INSERT INTO settings (key, value) VALUES
   ('overall_note', 'Live availability for Vox, the Telegram platform, and all nine Vox apps.'),
-  ('support_email', 'support@example.com');
+  ('support_email', 'support@example.com'),
+  ('status_url',   'https://status.voxiverse.ink');

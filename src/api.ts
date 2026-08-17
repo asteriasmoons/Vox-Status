@@ -104,6 +104,13 @@ export type IncidentUpdateRow = {
   time: string;
   message: string;
   sort_order: number;
+  // Per-update Telegram publishing state. telegram_html is the composed
+  // (server-stored) draft/last-sent content; the other fields describe
+  // whether it has been sent to the channel yet and when it last changed.
+  telegram_html: string | null;
+  telegram_message_id: number | null;
+  telegram_sent_at: number | null;
+  telegram_edited_at: number | null;
 };
 
 export const getIncidents = () =>
@@ -123,6 +130,27 @@ export const postIncidentUpdate = (
   id: number,
   body: { label?: string; time?: string; message: string; state?: IncidentState },
 ) => req<{ ok: true }>(`/api/incidents/${id}/updates`, { method: "POST", body: JSON.stringify(body) });
+
+// --- Telegram (per incident update) ---
+// The bot token / channel id live server-side; these endpoints proxy through
+// the Worker so the browser never sees Telegram credentials.
+export const saveTelegramDraft = (incidentId: number, updateId: number, telegram_html: string) =>
+  req<{ ok: true }>(`/api/incidents/${incidentId}/updates/${updateId}/telegram`, {
+    method: "PATCH",
+    body: JSON.stringify({ telegram_html }),
+  });
+
+export const sendTelegramUpdate = (incidentId: number, updateId: number, telegram_html: string) =>
+  req<{ ok: true; telegram_message_id: number; telegram_sent_at: number }>(
+    `/api/incidents/${incidentId}/updates/${updateId}/telegram/send`,
+    { method: "POST", body: JSON.stringify({ telegram_html }) },
+  );
+
+export const editTelegramUpdate = (incidentId: number, updateId: number, telegram_html: string) =>
+  req<{ ok: true; telegram_edited_at: number }>(
+    `/api/incidents/${incidentId}/updates/${updateId}/telegram/edit`,
+    { method: "POST", body: JSON.stringify({ telegram_html }) },
+  );
 
 // --- Maintenance ---
 export type MaintenanceRow = {

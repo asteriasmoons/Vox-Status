@@ -1,1 +1,1 @@
-{"root":["./src/dashboard.tsx","./src/api.ts","./src/main.tsx","./src/statusdata.ts","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/Dashboard.tsx","./src/TelegramComposer.tsx","./src/api.ts","./src/main.tsx","./src/statusData.ts","./src/vite-env.d.ts"],"version":"5.9.3"}

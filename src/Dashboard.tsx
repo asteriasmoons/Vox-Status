@@ -1,7 +1,7 @@
 import React from "react";
 import {
   Activity, LogOut, LayoutGrid, AlertTriangle, Wrench, FileText,
-  Plus, Trash2, Check, Loader2, RefreshCw,
+  Plus, Trash2, Check, Loader2, RefreshCw, Send, ChevronDown, ChevronUp,
 } from "lucide-react";
 import type { Status } from "./statusData";
 import * as api from "./api";
@@ -9,6 +9,7 @@ import type {
   EditableService, ServiceGroupRow, IncidentRow, IncidentUpdateRow,
   MaintenanceRow, Template, IncidentState, MaintenanceState,
 } from "./api";
+import { TelegramComposer } from "./TelegramComposer";
 import "./styles.css";
 import "./dashboard.css";
 
@@ -253,10 +254,20 @@ function IncidentsPanel({ notify }: PanelProps) {
   const [loading, setLoading] = React.useState(true);
   const [creating, setCreating] = React.useState(false);
 
+  const [statusUrl, setStatusUrl] = React.useState<string>("");
+
   const load = React.useCallback(async () => {
     setLoading(true);
-    const [i, t, s] = await Promise.all([api.getIncidents(), api.getTemplates("incident"), api.getServices()]);
+    const [i, t, s, snap] = await Promise.all([
+      api.getIncidents(),
+      api.getTemplates("incident"),
+      api.getServices(),
+      // Snapshot is public and cheap; we only read settings.status_url from it.
+      api.getStatus().catch(() => null),
+    ]);
     setIncidents(i.incidents); setUpdates(i.updates); setTemplates(t.templates); setServices(s.services);
+    const url = snap?.settings?.status_url;
+    setStatusUrl(url && url.trim() ? url : (typeof window !== "undefined" ? window.location.origin : ""));
     setLoading(false);
   }, []);
   React.useEffect(() => { load(); }, [load]);
@@ -267,7 +278,7 @@ function IncidentsPanel({ notify }: PanelProps) {
     <div className="panel">
       <PanelHeader
         title="Incidents"
-        subtitle="Open a new incident or post an update to an existing one."
+        subtitle="Open a new incident, post updates, and publish each update to Telegram."
         onRefresh={load}
         action={<button className="dash-btn primary" onClick={() => setCreating((v) => !v)}><Plus size={15} /> New incident</button>}
       />
@@ -289,6 +300,7 @@ function IncidentsPanel({ notify }: PanelProps) {
             incident={inc}
             updates={updates.filter((u) => u.incident_id === inc.id)}
             templates={templates}
+            statusUrl={statusUrl}
             onChanged={load}
             notify={notify}
           />
@@ -372,14 +384,22 @@ function NewIncidentForm({
 }
 
 function IncidentEditor({
-  incident, updates, templates, onChanged, notify,
+  incident, updates, templates, statusUrl, onChanged, notify,
 }: {
   incident: IncidentRow;
   updates: IncidentUpdateRow[];
   templates: Template[];
+  statusUrl: string;
   onChanged: () => void;
   notify: (m: string) => void;
 }) {
+  // Which update rows currently have their Telegram composer expanded.
+  const [openTg, setOpenTg] = React.useState<Set<number>>(() => new Set());
+  const toggleTg = (id: number) => setOpenTg((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const [message, setMessage] = React.useState("");
   const [label, setLabel] = React.useState("Update");
   const [state, setState] = React.useState<IncidentState>(incident.state);
@@ -421,15 +441,44 @@ function IncidentEditor({
       </div>
 
       <div className="incident-timeline">
-        {updates.map((u) => (
-          <div className="timeline-item" key={u.id}>
-            <span className="timeline-dot" />
-            <div>
-              <div className="timeline-heading"><strong>{u.label}</strong><span>{u.time}</span></div>
-              <p>{u.message}</p>
+        {updates.map((u) => {
+          const sent = u.telegram_message_id != null;
+          const open = openTg.has(u.id);
+          return (
+            <div className="timeline-item" key={u.id}>
+              <span className="timeline-dot" />
+              <div style={{ flex: 1 }}>
+                <div className="timeline-heading"><strong>{u.label}</strong><span>{u.time}</span></div>
+                <p>{u.message}</p>
+                <div className="tg-row">
+                  <span className={`tg-badge ${sent ? "tg-badge-on" : "tg-badge-off"}`}>
+                    {sent ? "✓ Telegram sent" : "○ Telegram not sent"}
+                  </span>
+                  <button
+                    type="button"
+                    className="dash-btn ghost tg-toggle"
+                    onClick={() => toggleTg(u.id)}
+                  >
+                    <Send size={13} />
+                    {sent
+                      ? (open ? "Hide Telegram editor" : "Edit Telegram post")
+                      : (open ? "Hide Telegram composer" : "Compose Telegram post")}
+                    {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  </button>
+                </div>
+                {open && (
+                  <TelegramComposer
+                    incident={incident}
+                    update={u}
+                    statusUrl={statusUrl}
+                    onChanged={onChanged}
+                    notify={notify}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="dash-update-box">

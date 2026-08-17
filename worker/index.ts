@@ -24,6 +24,10 @@ export interface Env {
   SESSIONS: KVNamespace;
   ASSETS: Fetcher;
   DASHBOARD_PASSWORD: string;
+  // Telegram publishing — reused from the existing Vox bot. All Telegram API
+  // calls happen server-side; these values are never returned to the client.
+  BOT_TOKEN?: string;
+  TELEGRAM_CHANNEL_ID?: string;
 }
 
 type Status = "operational" | "beta" | "degraded" | "partial" | "major" | "maintenance";
@@ -100,6 +104,80 @@ async function readBody<T = Record<string, unknown>>(request: Request): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// Telegram Bot API — server-side only. The bot token and channel id live in
+// the Worker environment (secrets in production, .dev.vars locally) and are
+// never returned to the browser.
+// ---------------------------------------------------------------------------
+
+type TelegramResult =
+  | { ok: true; messageId: number }
+  | { ok: false; error: string };
+
+// Telegram channel/supergroup ids are conventionally prefixed with `-100`.
+// The value stored in .env is the raw numeric id; normalize it here so the
+// user can paste either form.
+function normalizeChatId(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("-100") || trimmed.startsWith("@")) return trimmed;
+  if (trimmed.startsWith("-")) return trimmed;
+  // Bare numeric id for a channel: prepend the -100 marker.
+  if (/^\d+$/.test(trimmed)) return `-100${trimmed}`;
+  return trimmed;
+}
+
+async function telegramApi(
+  env: Env,
+  method: "sendMessage" | "editMessageText",
+  body: Record<string, unknown>,
+): Promise<TelegramResult> {
+  const token = env.BOT_TOKEN;
+  const chatId = normalizeChatId(env.TELEGRAM_CHANNEL_ID);
+  if (!token) return { ok: false, error: "BOT_TOKEN is not configured on the server." };
+  if (!chatId) return { ok: false, error: "TELEGRAM_CHANNEL_ID is not configured on the server." };
+
+  const payload = { chat_id: chatId, parse_mode: "HTML", ...body };
+  let res: Response;
+  try {
+    res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return { ok: false, error: `Network error: ${String(err)}` };
+  }
+
+  let data: any = null;
+  try { data = await res.json(); } catch { /* ignore */ }
+  if (!res.ok || !data?.ok) {
+    const description = data?.description ?? `HTTP ${res.status}`;
+    return { ok: false, error: String(description) };
+  }
+  const messageId = data.result?.message_id;
+  if (typeof messageId !== "number") {
+    return { ok: false, error: "Telegram did not return a message id." };
+  }
+  return { ok: true, messageId };
+}
+
+function telegramSend(env: Env, html: string, disableLinkPreview: boolean): Promise<TelegramResult> {
+  return telegramApi(env, "sendMessage", {
+    text: html,
+    link_preview_options: { is_disabled: disableLinkPreview },
+  });
+}
+
+function telegramEdit(env: Env, messageId: number, html: string, disableLinkPreview: boolean): Promise<TelegramResult> {
+  return telegramApi(env, "editMessageText", {
+    message_id: messageId,
+    text: html,
+    link_preview_options: { is_disabled: disableLinkPreview },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Public snapshot
 // ---------------------------------------------------------------------------
 
@@ -111,7 +189,9 @@ async function buildSnapshot(env: Env) {
         "SELECT id, group_id, name, description, status, uptime FROM services ORDER BY group_id, sort_order, id",
       ).all(),
       env.DB.prepare("SELECT id, title, state, date, affected FROM incidents ORDER BY created_at DESC, id DESC").all(),
-      env.DB.prepare("SELECT incident_id, label, time, message FROM incident_updates ORDER BY sort_order, id").all(),
+      env.DB.prepare(
+        "SELECT id, incident_id, label, time, message, telegram_message_id, telegram_sent_at, telegram_edited_at FROM incident_updates ORDER BY sort_order, id",
+      ).all(),
       env.DB.prepare(
         "SELECT id, title, body, window_start, window_end, state, affected FROM maintenance ORDER BY created_at DESC, id DESC",
       ).all(),
@@ -138,7 +218,17 @@ async function buildSnapshot(env: Env) {
     affected: parseJsonArray(i.affected as string),
     updates: (updateRows.results as any[])
       .filter((u) => u.incident_id === i.id)
-      .map((u) => ({ label: u.label as string, time: u.time as string, message: u.message as string })),
+      .map((u) => ({
+        id: u.id as number,
+        label: u.label as string,
+        time: u.time as string,
+        message: u.message as string,
+        // Only publish whether Telegram was sent + when. Never expose the raw
+        // Telegram HTML, message id, or bot token on the public snapshot.
+        telegramSent: u.telegram_message_id != null,
+        telegramSentAt: (u.telegram_sent_at as number | null) ?? null,
+        telegramEditedAt: (u.telegram_edited_at as number | null) ?? null,
+      })),
   }));
 
   const maintenance = (maintRows.results as any[]).map((m) => ({
@@ -244,7 +334,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       "SELECT id, title, state, date, affected, created_at FROM incidents ORDER BY created_at DESC, id DESC",
     ).all();
     const updates = await env.DB.prepare(
-      "SELECT id, incident_id, label, time, message, sort_order FROM incident_updates ORDER BY sort_order, id",
+      "SELECT id, incident_id, label, time, message, sort_order, telegram_html, telegram_message_id, telegram_sent_at, telegram_edited_at FROM incident_updates ORDER BY sort_order, id",
     ).all();
     return json({ incidents: incidents.results, updates: updates.results });
   }
@@ -308,6 +398,79 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       await env.DB.prepare("UPDATE incidents SET state = ? WHERE id = ?").bind(b.state, incidentId).run();
     }
     return json({ ok: true });
+  }
+
+  // --- Telegram publishing (per incident update) ---
+  //
+  // All Telegram Bot API traffic is proxied here. The client never sees
+  // BOT_TOKEN or TELEGRAM_CHANNEL_ID and cannot craft direct sendMessage
+  // calls; it can only ask the dashboard to (a) save a draft against a
+  // known update id, (b) send that draft, or (c) edit an already-sent
+  // message. Auth is enforced by the isAuthed() gate above.
+  const tgSaveMatch = path.match(/^\/api\/incidents\/(\d+)\/updates\/(\d+)\/telegram$/);
+  if (tgSaveMatch && method === "PATCH") {
+    const updateId = Number(tgSaveMatch[2]);
+    const b = await readBody<{ telegram_html?: string }>(request);
+    if (typeof b.telegram_html !== "string") {
+      return json({ error: "telegram_html is required" }, { status: 400 });
+    }
+    await env.DB.prepare("UPDATE incident_updates SET telegram_html = ? WHERE id = ?")
+      .bind(b.telegram_html, updateId).run();
+    return json({ ok: true });
+  }
+
+  const tgSendMatch = path.match(/^\/api\/incidents\/(\d+)\/updates\/(\d+)\/telegram\/send$/);
+  if (tgSendMatch && method === "POST") {
+    const updateId = Number(tgSendMatch[2]);
+    const b = await readBody<{ telegram_html?: string; disable_link_preview?: boolean }>(request);
+    const html = (b.telegram_html ?? "").trim();
+    if (!html) return json({ error: "Telegram message is empty." }, { status: 400 });
+    if (html.length > 4096) return json({ error: "Telegram message exceeds 4096 characters." }, { status: 400 });
+
+    const existing = await env.DB.prepare(
+      "SELECT id, telegram_message_id FROM incident_updates WHERE id = ?",
+    ).bind(updateId).first<{ id: number; telegram_message_id: number | null }>();
+    if (!existing) return json({ error: "Update not found." }, { status: 404 });
+    if (existing.telegram_message_id != null) {
+      return json({ error: "This update has already been sent to Telegram. Use edit instead." }, { status: 409 });
+    }
+
+    const tg = await telegramSend(env, html, b.disable_link_preview ?? true);
+    if (!tg.ok) return json({ error: `Telegram: ${tg.error}` }, { status: 502 });
+
+    const sentAt = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      "UPDATE incident_updates SET telegram_html = ?, telegram_message_id = ?, telegram_sent_at = ?, telegram_edited_at = NULL WHERE id = ?",
+    ).bind(html, tg.messageId, sentAt, updateId).run();
+
+    return json({ ok: true, telegram_message_id: tg.messageId, telegram_sent_at: sentAt });
+  }
+
+  const tgEditMatch = path.match(/^\/api\/incidents\/(\d+)\/updates\/(\d+)\/telegram\/edit$/);
+  if (tgEditMatch && method === "POST") {
+    const updateId = Number(tgEditMatch[2]);
+    const b = await readBody<{ telegram_html?: string; disable_link_preview?: boolean }>(request);
+    const html = (b.telegram_html ?? "").trim();
+    if (!html) return json({ error: "Telegram message is empty." }, { status: 400 });
+    if (html.length > 4096) return json({ error: "Telegram message exceeds 4096 characters." }, { status: 400 });
+
+    const existing = await env.DB.prepare(
+      "SELECT telegram_message_id FROM incident_updates WHERE id = ?",
+    ).bind(updateId).first<{ telegram_message_id: number | null }>();
+    if (!existing) return json({ error: "Update not found." }, { status: 404 });
+    if (existing.telegram_message_id == null) {
+      return json({ error: "This update has not been sent to Telegram yet." }, { status: 409 });
+    }
+
+    const tg = await telegramEdit(env, existing.telegram_message_id, html, b.disable_link_preview ?? true);
+    if (!tg.ok) return json({ error: `Telegram: ${tg.error}` }, { status: 502 });
+
+    const editedAt = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      "UPDATE incident_updates SET telegram_html = ?, telegram_edited_at = ? WHERE id = ?",
+    ).bind(html, editedAt, updateId).run();
+
+    return json({ ok: true, telegram_edited_at: editedAt });
   }
 
   // --- Maintenance ---
