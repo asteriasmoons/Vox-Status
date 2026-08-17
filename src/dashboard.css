@@ -165,6 +165,25 @@ textarea { resize: vertical; }
 }
 .tg-preview-bubble .tg-spoiler:hover { color: #eef0f6; }
 
+.tg-button-editor { display: flex; flex-direction: column; gap: 6px; }
+.tg-button-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr) auto; gap: 8px; align-items: stretch; }
+.tg-button-input { padding: 9px 11px; font-size: 13px; }
+.tg-button-clear { padding: 8px 12px; font-size: 12px; }
+.tg-button-hint { font-size: 11px; color: #ffb894; }
+.tg-button-hint code { background: rgba(255,255,255,.06); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+/* Inline-keyboard button preview — approximates Telegram's button rendering
+   underneath a message. Full-width, rounded, subtle accent tint. */
+.tg-preview-button {
+  display: block; margin-top: 10px; padding: 9px 12px;
+  text-align: center; text-decoration: none;
+  background: rgba(159,124,255,.14); color: #d8ccff;
+  border: 1px solid rgba(159,124,255,.35); border-radius: 10px;
+  font-size: 13px; font-weight: 650;
+  transition: background .12s, color .12s;
+}
+.tg-preview-button:hover { background: rgba(159,124,255,.22); color: #fff; }
+
 .tg-composer-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tg-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tg-count.over { color: #ff8c78; font-weight: 700; }
@@ -173,4 +192,5 @@ textarea { resize: vertical; }
 
 @media (max-width: 640px) {
   .tg-actions { width: 100%; justify-content: flex-end; }
+  .tg-button-row { grid-template-columns: 1fr; }
 }

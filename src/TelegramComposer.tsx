@@ -62,7 +62,7 @@ function escHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
 }
 
-function generateDraft(incident: IncidentRow, update: IncidentUpdateRow, statusUrl: string): string {
+function generateDraft(incident: IncidentRow, update: IncidentUpdateRow): string {
   // Prefer the update's label (Investigating / Identified / Monitoring /
   // Resolved) — it's what actually describes this specific update. Fall
   // back to the incident's overall state.
@@ -71,10 +71,11 @@ function generateDraft(incident: IncidentRow, update: IncidentUpdateRow, statusU
   const affected = parseAffected(incident.affected);
   const service = affected[0] ?? "Vox";
   const body = (update.message ?? "").trim() || meta.blurb(service);
+  // No inline "View status →" link — the CTA lives in the inline-keyboard
+  // button below the message (see the Button editor in the composer).
   return (
     `${meta.emoji} <b>${escHtml(service)} — ${escHtml(meta.label)}</b>\n` +
-    `${escHtml(body)}\n\n` +
-    `<a href="${escHtml(statusUrl)}">View status →</a>`
+    `${escHtml(body)}`
   );
 }
 
@@ -238,12 +239,36 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
   // the preview and character count update live.
   const initial = React.useMemo(() => {
     if (update.telegram_html && update.telegram_html.trim()) return update.telegram_html;
-    return generateDraft(incident, update, statusUrl);
-  }, [incident, update, statusUrl]);
+    return generateDraft(incident, update);
+  }, [incident, update]);
   const [html, setHtml] = React.useState<string>(initial);
   const [busy, setBusy] = React.useState<"send" | "edit" | "save" | null>(null);
   const [error, setError] = React.useState<string>("");
   const [dirty, setDirty] = React.useState(false);
+
+  // Inline-keyboard button. Defaults to a "View status" button pointed at
+  // the status page — the user can rename it, change the URL, or clear both
+  // fields to send the message with no button attached.
+  const initialButtonText = update.telegram_button_text
+    ?? (update.telegram_message_id == null ? "View status" : "");
+  const initialButtonUrl = update.telegram_button_url
+    ?? (update.telegram_message_id == null ? statusUrl : "");
+  const [buttonText, setButtonText] = React.useState<string>(initialButtonText);
+  const [buttonUrl, setButtonUrl]   = React.useState<string>(initialButtonUrl);
+  const buttonPayload = React.useMemo(() => ({
+    telegram_button_text: buttonText.trim() ? buttonText.trim() : null,
+    telegram_button_url:  buttonUrl.trim()  ? buttonUrl.trim()  : null,
+  }), [buttonText, buttonUrl]);
+  const buttonInvalid =
+    (buttonText.trim() && !buttonUrl.trim()) ||
+    (buttonUrl.trim() && !buttonText.trim()) ||
+    (buttonUrl.trim() && !/^(https?:\/\/|tg:\/\/)/i.test(buttonUrl.trim()));
+
+  function onButtonChange(next: { text?: string; url?: string }) {
+    if (next.text !== undefined) setButtonText(next.text);
+    if (next.url  !== undefined) setButtonUrl(next.url);
+    setDirty(true);
+  }
 
   // Seed the contentEditable once from the initial HTML (which is Telegram
   // HTML — the tag whitelist is a subset of what the browser will render).
@@ -314,7 +339,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
   async function onSaveDraft() {
     setBusy("save"); setError("");
     try {
-      await api.saveTelegramDraft(incident.id, update.id, html);
+      await api.saveTelegramDraft(incident.id, update.id, html, buttonPayload);
       setDirty(false);
       notify("Telegram draft saved");
       await onChanged();
@@ -328,7 +353,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
   async function onSend() {
     setBusy("send"); setError("");
     try {
-      await api.sendTelegramUpdate(incident.id, update.id, html);
+      await api.sendTelegramUpdate(incident.id, update.id, html, buttonPayload);
       setDirty(false);
       notify("Sent to Telegram");
       await onChanged();
@@ -342,7 +367,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
   async function onEdit() {
     setBusy("edit"); setError("");
     try {
-      await api.editTelegramUpdate(incident.id, update.id, html);
+      await api.editTelegramUpdate(incident.id, update.id, html, buttonPayload);
       setDirty(false);
       notify("Telegram message updated");
       await onChanged();
@@ -383,9 +408,12 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
           className="tg-tool tg-tool-text"
           title="Reset to generated draft"
           onClick={() => {
-            const draft = generateDraft(incident, update, statusUrl);
+            const draft = generateDraft(incident, update);
             if (editorRef.current) editorRef.current.innerHTML = draft;
-            setHtml(draft); setDirty(true);
+            setHtml(draft);
+            setButtonText("View status");
+            setButtonUrl(statusUrl);
+            setDirty(true);
           }}
         >
           <Trash2 size={13} /> Reset
@@ -403,9 +431,56 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
         aria-label="Telegram message body"
       />
 
+      <div className="tg-button-editor">
+        <span className="tg-preview-label">Inline button (optional)</span>
+        <div className="tg-button-row">
+          <input
+            className="tg-button-input"
+            type="text"
+            placeholder="Button label — e.g. View status"
+            value={buttonText}
+            onChange={(e) => onButtonChange({ text: e.target.value })}
+            aria-label="Inline button label"
+          />
+          <input
+            className="tg-button-input"
+            type="url"
+            placeholder="https://…"
+            value={buttonUrl}
+            onChange={(e) => onButtonChange({ url: e.target.value })}
+            aria-label="Inline button URL"
+          />
+          <button
+            type="button"
+            className="dash-btn ghost tg-button-clear"
+            onClick={() => { setButtonText(""); setButtonUrl(""); setDirty(true); }}
+            title="Send without a button"
+          >
+            Clear
+          </button>
+        </div>
+        {buttonInvalid && (
+          <div className="tg-button-hint">
+            Provide both a label and an <code>https://</code> URL, or clear both to send without a button.
+          </div>
+        )}
+      </div>
+
       <div className="tg-preview">
         <span className="tg-preview-label">Preview</span>
-        <div className="tg-preview-bubble">{renderPreview(html)}</div>
+        <div className="tg-preview-bubble">
+          {renderPreview(html)}
+          {buttonPayload.telegram_button_text && buttonPayload.telegram_button_url && !buttonInvalid && (
+            <a
+              className="tg-preview-button"
+              href={buttonPayload.telegram_button_url}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              {buttonPayload.telegram_button_text}
+            </a>
+          )}
+        </div>
       </div>
 
       <div className="tg-composer-foot">
@@ -426,7 +501,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
                 type="button"
                 className="dash-btn primary"
                 onClick={onEdit}
-                disabled={busy !== null || overLimit || !html.trim()}
+                disabled={busy !== null || overLimit || !html.trim() || Boolean(buttonInvalid)}
               >
                 {busy === "edit" ? <Loader2 className="spin" size={14} /> : <Save size={14} />} Save Telegram edit
               </button>
@@ -445,7 +520,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
                 type="button"
                 className="dash-btn primary"
                 onClick={onSend}
-                disabled={busy !== null || overLimit || !html.trim()}
+                disabled={busy !== null || overLimit || !html.trim() || Boolean(buttonInvalid)}
               >
                 {busy === "send" ? <Loader2 className="spin" size={14} /> : <Send size={14} />} Send to Telegram
               </button>

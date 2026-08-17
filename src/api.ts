@@ -111,6 +111,9 @@ export type IncidentUpdateRow = {
   telegram_message_id: number | null;
   telegram_sent_at: number | null;
   telegram_edited_at: number | null;
+  // Optional inline-keyboard button (text + url) sent alongside the message.
+  telegram_button_text: string | null;
+  telegram_button_url: string | null;
 };
 
 export const getIncidents = () =>
@@ -134,22 +137,33 @@ export const postIncidentUpdate = (
 // --- Telegram (per incident update) ---
 // The bot token / channel id live server-side; these endpoints proxy through
 // the Worker so the browser never sees Telegram credentials.
-export const saveTelegramDraft = (incidentId: number, updateId: number, telegram_html: string) =>
+export type TelegramButton = {
+  telegram_button_text?: string | null;
+  telegram_button_url?: string | null;
+};
+
+export const saveTelegramDraft = (
+  incidentId: number, updateId: number, telegram_html: string, button: TelegramButton = {},
+) =>
   req<{ ok: true }>(`/api/incidents/${incidentId}/updates/${updateId}/telegram`, {
     method: "PATCH",
-    body: JSON.stringify({ telegram_html }),
+    body: JSON.stringify({ telegram_html, ...button }),
   });
 
-export const sendTelegramUpdate = (incidentId: number, updateId: number, telegram_html: string) =>
+export const sendTelegramUpdate = (
+  incidentId: number, updateId: number, telegram_html: string, button: TelegramButton = {},
+) =>
   req<{ ok: true; telegram_message_id: number; telegram_sent_at: number }>(
     `/api/incidents/${incidentId}/updates/${updateId}/telegram/send`,
-    { method: "POST", body: JSON.stringify({ telegram_html }) },
+    { method: "POST", body: JSON.stringify({ telegram_html, ...button }) },
   );
 
-export const editTelegramUpdate = (incidentId: number, updateId: number, telegram_html: string) =>
+export const editTelegramUpdate = (
+  incidentId: number, updateId: number, telegram_html: string, button: TelegramButton = {},
+) =>
   req<{ ok: true; telegram_edited_at: number }>(
     `/api/incidents/${incidentId}/updates/${updateId}/telegram/edit`,
-    { method: "POST", body: JSON.stringify({ telegram_html }) },
+    { method: "POST", body: JSON.stringify({ telegram_html, ...button }) },
   );
 
 // --- Maintenance ---

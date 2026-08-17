@@ -162,18 +162,46 @@ async function telegramApi(
   return { ok: true, messageId };
 }
 
-function telegramSend(env: Env, html: string, disableLinkPreview: boolean): Promise<TelegramResult> {
+// Build the inline_keyboard reply_markup for an optional single-button CTA.
+// Returns undefined when the button is absent so we don't send an empty
+// keyboard to Telegram (which would still render an empty gap).
+function buildReplyMarkup(button: { text?: string | null; url?: string | null }): unknown | undefined {
+  const text = (button.text ?? "").trim();
+  const url = (button.url ?? "").trim();
+  if (!text || !url) return undefined;
+  if (!/^https?:\/\//i.test(url) && !/^tg:\/\//i.test(url)) return undefined;
+  return { inline_keyboard: [[{ text, url }]] };
+}
+
+function telegramSend(
+  env: Env,
+  html: string,
+  disableLinkPreview: boolean,
+  button: { text?: string | null; url?: string | null },
+): Promise<TelegramResult> {
+  const reply_markup = buildReplyMarkup(button);
   return telegramApi(env, "sendMessage", {
     text: html,
     link_preview_options: { is_disabled: disableLinkPreview },
+    ...(reply_markup ? { reply_markup } : {}),
   });
 }
 
-function telegramEdit(env: Env, messageId: number, html: string, disableLinkPreview: boolean): Promise<TelegramResult> {
+function telegramEdit(
+  env: Env,
+  messageId: number,
+  html: string,
+  disableLinkPreview: boolean,
+  button: { text?: string | null; url?: string | null },
+): Promise<TelegramResult> {
+  const reply_markup = buildReplyMarkup(button);
+  // editMessageText replaces the keyboard entirely — pass an empty
+  // inline_keyboard to clear a previously-attached button.
   return telegramApi(env, "editMessageText", {
     message_id: messageId,
     text: html,
     link_preview_options: { is_disabled: disableLinkPreview },
+    reply_markup: reply_markup ?? { inline_keyboard: [] },
   });
 }
 
@@ -334,7 +362,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       "SELECT id, title, state, date, affected, created_at FROM incidents ORDER BY created_at DESC, id DESC",
     ).all();
     const updates = await env.DB.prepare(
-      "SELECT id, incident_id, label, time, message, sort_order, telegram_html, telegram_message_id, telegram_sent_at, telegram_edited_at FROM incident_updates ORDER BY sort_order, id",
+      "SELECT id, incident_id, label, time, message, sort_order, telegram_html, telegram_message_id, telegram_sent_at, telegram_edited_at, telegram_button_text, telegram_button_url FROM incident_updates ORDER BY sort_order, id",
     ).all();
     return json({ incidents: incidents.results, updates: updates.results });
   }
@@ -410,22 +438,46 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const tgSaveMatch = path.match(/^\/api\/incidents\/(\d+)\/updates\/(\d+)\/telegram$/);
   if (tgSaveMatch && method === "PATCH") {
     const updateId = Number(tgSaveMatch[2]);
-    const b = await readBody<{ telegram_html?: string }>(request);
+    const b = await readBody<{
+      telegram_html?: string;
+      telegram_button_text?: string | null;
+      telegram_button_url?: string | null;
+    }>(request);
     if (typeof b.telegram_html !== "string") {
       return json({ error: "telegram_html is required" }, { status: 400 });
     }
-    await env.DB.prepare("UPDATE incident_updates SET telegram_html = ? WHERE id = ?")
-      .bind(b.telegram_html, updateId).run();
+    await env.DB.prepare(
+      "UPDATE incident_updates SET telegram_html = ?, telegram_button_text = ?, telegram_button_url = ? WHERE id = ?",
+    ).bind(
+      b.telegram_html,
+      b.telegram_button_text ?? null,
+      b.telegram_button_url ?? null,
+      updateId,
+    ).run();
     return json({ ok: true });
   }
 
   const tgSendMatch = path.match(/^\/api\/incidents\/(\d+)\/updates\/(\d+)\/telegram\/send$/);
   if (tgSendMatch && method === "POST") {
     const updateId = Number(tgSendMatch[2]);
-    const b = await readBody<{ telegram_html?: string; disable_link_preview?: boolean }>(request);
+    const b = await readBody<{
+      telegram_html?: string;
+      disable_link_preview?: boolean;
+      telegram_button_text?: string | null;
+      telegram_button_url?: string | null;
+    }>(request);
     const html = (b.telegram_html ?? "").trim();
     if (!html) return json({ error: "Telegram message is empty." }, { status: 400 });
     if (html.length > 4096) return json({ error: "Telegram message exceeds 4096 characters." }, { status: 400 });
+
+    const buttonText = (b.telegram_button_text ?? "").trim() || null;
+    const buttonUrl  = (b.telegram_button_url ?? "").trim() || null;
+    if ((buttonText && !buttonUrl) || (buttonUrl && !buttonText)) {
+      return json({ error: "Button text and URL must both be set, or both empty." }, { status: 400 });
+    }
+    if (buttonUrl && !/^https?:\/\//i.test(buttonUrl) && !/^tg:\/\//i.test(buttonUrl)) {
+      return json({ error: "Button URL must start with http(s):// or tg://." }, { status: 400 });
+    }
 
     const existing = await env.DB.prepare(
       "SELECT id, telegram_message_id FROM incident_updates WHERE id = ?",
@@ -435,13 +487,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ error: "This update has already been sent to Telegram. Use edit instead." }, { status: 409 });
     }
 
-    const tg = await telegramSend(env, html, b.disable_link_preview ?? true);
+    const tg = await telegramSend(env, html, b.disable_link_preview ?? true, { text: buttonText, url: buttonUrl });
     if (!tg.ok) return json({ error: `Telegram: ${tg.error}` }, { status: 502 });
 
     const sentAt = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
-      "UPDATE incident_updates SET telegram_html = ?, telegram_message_id = ?, telegram_sent_at = ?, telegram_edited_at = NULL WHERE id = ?",
-    ).bind(html, tg.messageId, sentAt, updateId).run();
+      "UPDATE incident_updates SET telegram_html = ?, telegram_message_id = ?, telegram_sent_at = ?, telegram_edited_at = NULL, telegram_button_text = ?, telegram_button_url = ? WHERE id = ?",
+    ).bind(html, tg.messageId, sentAt, buttonText, buttonUrl, updateId).run();
 
     return json({ ok: true, telegram_message_id: tg.messageId, telegram_sent_at: sentAt });
   }
@@ -449,10 +501,24 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const tgEditMatch = path.match(/^\/api\/incidents\/(\d+)\/updates\/(\d+)\/telegram\/edit$/);
   if (tgEditMatch && method === "POST") {
     const updateId = Number(tgEditMatch[2]);
-    const b = await readBody<{ telegram_html?: string; disable_link_preview?: boolean }>(request);
+    const b = await readBody<{
+      telegram_html?: string;
+      disable_link_preview?: boolean;
+      telegram_button_text?: string | null;
+      telegram_button_url?: string | null;
+    }>(request);
     const html = (b.telegram_html ?? "").trim();
     if (!html) return json({ error: "Telegram message is empty." }, { status: 400 });
     if (html.length > 4096) return json({ error: "Telegram message exceeds 4096 characters." }, { status: 400 });
+
+    const buttonText = (b.telegram_button_text ?? "").trim() || null;
+    const buttonUrl  = (b.telegram_button_url ?? "").trim() || null;
+    if ((buttonText && !buttonUrl) || (buttonUrl && !buttonText)) {
+      return json({ error: "Button text and URL must both be set, or both empty." }, { status: 400 });
+    }
+    if (buttonUrl && !/^https?:\/\//i.test(buttonUrl) && !/^tg:\/\//i.test(buttonUrl)) {
+      return json({ error: "Button URL must start with http(s):// or tg://." }, { status: 400 });
+    }
 
     const existing = await env.DB.prepare(
       "SELECT telegram_message_id FROM incident_updates WHERE id = ?",
@@ -462,13 +528,15 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ error: "This update has not been sent to Telegram yet." }, { status: 409 });
     }
 
-    const tg = await telegramEdit(env, existing.telegram_message_id, html, b.disable_link_preview ?? true);
+    const tg = await telegramEdit(env, existing.telegram_message_id, html, b.disable_link_preview ?? true, {
+      text: buttonText, url: buttonUrl,
+    });
     if (!tg.ok) return json({ error: `Telegram: ${tg.error}` }, { status: 502 });
 
     const editedAt = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
-      "UPDATE incident_updates SET telegram_html = ?, telegram_edited_at = ? WHERE id = ?",
-    ).bind(html, editedAt, updateId).run();
+      "UPDATE incident_updates SET telegram_html = ?, telegram_edited_at = ?, telegram_button_text = ?, telegram_button_url = ? WHERE id = ?",
+    ).bind(html, editedAt, buttonText, buttonUrl, updateId).run();
 
     return json({ ok: true, telegram_edited_at: editedAt });
   }

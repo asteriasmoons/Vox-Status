@@ -47,10 +47,12 @@ CREATE TABLE incident_updates (
   created_at           INTEGER NOT NULL DEFAULT (unixepoch()),
   -- Telegram publishing (see schema.telegram.sql). Populated when this
   -- specific update has been composed/sent as its own Telegram post.
-  telegram_html        TEXT,
-  telegram_message_id  INTEGER,
-  telegram_sent_at     INTEGER,
-  telegram_edited_at   INTEGER
+  telegram_html         TEXT,
+  telegram_message_id   INTEGER,
+  telegram_sent_at      INTEGER,
+  telegram_edited_at    INTEGER,
+  telegram_button_text  TEXT,
+  telegram_button_url   TEXT
 );
 
 CREATE TABLE maintenance (

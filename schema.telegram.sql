@@ -1,18 +1,22 @@
--- Vox Status Page — Telegram publishing migration
--- Adds per-update Telegram metadata to incident_updates.
+-- Vox Status Page — Telegram publishing migration (incremental)
+--
+-- The initial Telegram columns (telegram_html, telegram_message_id,
+-- telegram_sent_at, telegram_edited_at) were already applied to the
+-- remote D1 database in the first Telegram migration. Re-running those
+-- ALTER TABLE statements would fail with `duplicate column name`, so
+-- this file now only adds the columns introduced by the inline-keyboard
+-- button feature.
+--
 -- Apply with:
 --   npx wrangler d1 execute vox-status --remote --file=./schema.telegram.sql
 --   npx wrangler d1 execute vox-status --local  --file=./schema.telegram.sql
 --
--- Safe to re-run: guarded by IF NOT EXISTS via a settings marker.
+-- D1/SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so if these two
+-- columns have already been applied, this file will error with
+-- "duplicate column name" and can safely be ignored.
 
--- D1/SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so these will error
--- on a second run. That is expected; ignore "duplicate column" errors.
-
-ALTER TABLE incident_updates ADD COLUMN telegram_html        TEXT;
-ALTER TABLE incident_updates ADD COLUMN telegram_message_id  INTEGER;
-ALTER TABLE incident_updates ADD COLUMN telegram_sent_at     INTEGER;
-ALTER TABLE incident_updates ADD COLUMN telegram_edited_at   INTEGER;
+ALTER TABLE incident_updates ADD COLUMN telegram_button_text  TEXT;
+ALTER TABLE incident_updates ADD COLUMN telegram_button_url   TEXT;
 
 INSERT OR IGNORE INTO settings (key, value)
   VALUES ('status_url', 'https://status.voxiverse.ink');
