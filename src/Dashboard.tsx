@@ -9,7 +9,8 @@ import type {
   EditableService, ServiceGroupRow, IncidentRow, IncidentUpdateRow,
   MaintenanceRow, Template, IncidentState, MaintenanceState,
 } from "./api";
-import { TelegramComposer } from "./TelegramComposer";
+import { TelegramComposer, escHtml, parseAffected } from "./TelegramComposer";
+import type { TelegramTarget } from "./TelegramComposer";
 import "./styles.css";
 import "./dashboard.css";
 
@@ -33,6 +34,44 @@ function todayDate() {
 }
 function parseData(json: string): any {
   try { return JSON.parse(json); } catch { return {}; }
+}
+
+// --- Telegram draft generators (kept in Dashboard so the composer stays
+// target-agnostic). Each returns Telegram-compatible HTML for a fresh draft. ---
+
+const INCIDENT_STATE_META: Record<string, { emoji: string; label: string; blurb: (svc: string) => string }> = {
+  investigating: { emoji: "🔴", label: "Investigating", blurb: (s) => `We're investigating an issue affecting ${s}.` },
+  identified:    { emoji: "🟠", label: "Identified",    blurb: (s) => `We've identified the cause of the current ${s} issue and are working on a fix.` },
+  monitoring:    { emoji: "🟡", label: "Monitoring",    blurb: (s) => `A fix has been deployed for the ${s} issue and we're monitoring recovery.` },
+  resolved:      { emoji: "🟢", label: "Resolved",      blurb: (s) => `The ${s} issue has been resolved and service is operating normally.` },
+};
+
+function draftForIncidentUpdate(incident: IncidentRow, update: IncidentUpdateRow): string {
+  const key = (update.label || incident.state || "investigating").toLowerCase().trim();
+  const meta = INCIDENT_STATE_META[key] ?? INCIDENT_STATE_META[incident.state] ?? INCIDENT_STATE_META.investigating;
+  const affected = parseAffected(incident.affected);
+  const service = affected[0] ?? "Vox";
+  const body = (update.message ?? "").trim() || meta.blurb(service);
+  return `${meta.emoji} <b>${escHtml(service)} — ${escHtml(meta.label)}</b>\n${escHtml(body)}`;
+}
+
+const MAINTENANCE_STATE_META: Record<string, { emoji: string; label: string; blurb: (svc: string) => string }> = {
+  scheduled:   { emoji: "🛠️", label: "Scheduled maintenance", blurb: (s) => `Scheduled maintenance for ${s} is planned. Brief interruptions may occur during the window.` },
+  in_progress: { emoji: "🔧", label: "Maintenance in progress", blurb: (s) => `Maintenance on ${s} is now in progress. Brief interruptions may occur.` },
+  completed:   { emoji: "✅", label: "Maintenance completed", blurb: (s) => `Maintenance on ${s} is complete. Service is operating normally.` },
+};
+
+function draftForMaintenance(m: MaintenanceRow): string {
+  const meta = MAINTENANCE_STATE_META[m.state] ?? MAINTENANCE_STATE_META.scheduled;
+  const affected = parseAffected(m.affected);
+  const service = affected[0] ?? "Vox";
+  const title = (m.title ?? "").trim() || meta.label;
+  const bodyLine = (m.body ?? "").trim() || meta.blurb(service);
+  const windowLine =
+    m.window_start || m.window_end
+      ? `\n<i>${escHtml([m.window_start, m.window_end].filter(Boolean).join(" → "))}</i>`
+      : "";
+  return `${meta.emoji} <b>${escHtml(title)}</b>${windowLine}\n${escHtml(bodyLine)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -468,8 +507,21 @@ function IncidentEditor({
                 </div>
                 {open && (
                   <TelegramComposer
-                    incident={incident}
-                    update={u}
+                    target={{
+                      key: `incident-update-${u.id}`,
+                      generateDraft: () => draftForIncidentUpdate(incident, u),
+                      existing: {
+                        html: u.telegram_html,
+                        message_id: u.telegram_message_id,
+                        sent_at: u.telegram_sent_at,
+                        edited_at: u.telegram_edited_at,
+                        button_text: u.telegram_button_text,
+                        button_url: u.telegram_button_url,
+                      },
+                      save: (html, btn) => api.saveTelegramDraft(incident.id, u.id, html, btn),
+                      send: (html, btn) => api.sendTelegramUpdate(incident.id, u.id, html, btn),
+                      edit: (html, btn) => api.editTelegramUpdate(incident.id, u.id, html, btn),
+                    }}
                     statusUrl={statusUrl}
                     onChanged={onChanged}
                     notify={notify}
@@ -515,11 +567,25 @@ function MaintenancePanel({ notify }: PanelProps) {
   const [templates, setTemplates] = React.useState<Template[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [creating, setCreating] = React.useState(false);
+  const [statusUrl, setStatusUrl] = React.useState<string>("");
+  const [openTg, setOpenTg] = React.useState<Set<number>>(() => new Set());
+  const toggleTg = (id: number) => setOpenTg((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const load = React.useCallback(async () => {
     setLoading(true);
-    const [m, t] = await Promise.all([api.getMaintenance(), api.getTemplates("maintenance")]);
-    setItems(m.maintenance); setTemplates(t.templates); setLoading(false);
+    const [m, t, snap] = await Promise.all([
+      api.getMaintenance(),
+      api.getTemplates("maintenance"),
+      api.getStatus().catch(() => null),
+    ]);
+    setItems(m.maintenance); setTemplates(t.templates);
+    const url = snap?.settings?.status_url;
+    setStatusUrl(url && url.trim() ? url : (typeof window !== "undefined" ? window.location.origin : ""));
+    setLoading(false);
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -532,7 +598,7 @@ function MaintenancePanel({ notify }: PanelProps) {
     <div className="panel">
       <PanelHeader
         title="Scheduled maintenance"
-        subtitle="Announce maintenance windows on the status page."
+        subtitle="Announce maintenance windows on the status page and publish each one to Telegram."
         onRefresh={load}
         action={<button className="dash-btn primary" onClick={() => setCreating((v) => !v)}><Plus size={15} /> New window</button>}
       />
@@ -545,24 +611,67 @@ function MaintenancePanel({ notify }: PanelProps) {
       )}
       <div className="dash-card-list">
         {items.length === 0 && <EmptyState text="No maintenance scheduled." />}
-        {items.map((m) => (
-          <div className="side-card dash-incident" key={m.id}>
-            <div className="dash-incident-head">
-              <div>
-                <span className={`incident-state ${m.state === "completed" ? "resolved" : m.state === "in_progress" ? "monitoring" : "investigating"}`}>{m.state.replace("_", " ")}</span>
-                <h3>{m.title}</h3>
-                {(m.window_start || m.window_end) && <p>{[m.window_start, m.window_end].filter(Boolean).join(" → ")}</p>}
+        {items.map((m) => {
+          const sent = m.telegram_message_id != null;
+          const open = openTg.has(m.id);
+          const target: TelegramTarget = {
+            key: `maintenance-${m.id}`,
+            generateDraft: () => draftForMaintenance(m),
+            existing: {
+              html: m.telegram_html,
+              message_id: m.telegram_message_id,
+              sent_at: m.telegram_sent_at,
+              edited_at: m.telegram_edited_at,
+              button_text: m.telegram_button_text,
+              button_url: m.telegram_button_url,
+            },
+            save: (html, btn) => api.saveMaintenanceTelegramDraft(m.id, html, btn),
+            send: (html, btn) => api.sendMaintenanceTelegram(m.id, html, btn),
+            edit: (html, btn) => api.editMaintenanceTelegram(m.id, html, btn),
+          };
+          return (
+            <div className="side-card dash-incident" key={m.id}>
+              <div className="dash-incident-head">
+                <div>
+                  <span className={`incident-state ${m.state === "completed" ? "resolved" : m.state === "in_progress" ? "monitoring" : "investigating"}`}>{m.state.replace("_", " ")}</span>
+                  <h3>{m.title}</h3>
+                  {(m.window_start || m.window_end) && <p>{[m.window_start, m.window_end].filter(Boolean).join(" → ")}</p>}
+                </div>
+                <button className="dash-icon-btn" onClick={() => remove(m.id)} aria-label="Delete"><Trash2 size={15} /></button>
               </div>
-              <button className="dash-icon-btn" onClick={() => remove(m.id)} aria-label="Delete"><Trash2 size={15} /></button>
+              {m.body && <p className="dash-muted">{m.body}</p>}
+              <div className="dash-status-row">
+                {MAINTENANCE_STATES.map((s) => (
+                  <button key={s} className={`status-chip ${m.state === s ? "on" : ""}`} onClick={() => setState(m.id, s)}>{s.replace("_", " ")}</button>
+                ))}
+              </div>
+              <div className="tg-row">
+                <span className={`tg-badge ${sent ? "tg-badge-on" : "tg-badge-off"}`}>
+                  {sent ? "✓ Telegram sent" : "○ Telegram not sent"}
+                </span>
+                <button
+                  type="button"
+                  className="dash-btn ghost tg-toggle"
+                  onClick={() => toggleTg(m.id)}
+                >
+                  <Send size={13} />
+                  {sent
+                    ? (open ? "Hide Telegram editor" : "Edit Telegram post")
+                    : (open ? "Hide Telegram composer" : "Compose Telegram post")}
+                  {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </button>
+              </div>
+              {open && (
+                <TelegramComposer
+                  target={target}
+                  statusUrl={statusUrl}
+                  onChanged={load}
+                  notify={notify}
+                />
+              )}
             </div>
-            {m.body && <p className="dash-muted">{m.body}</p>}
-            <div className="dash-status-row">
-              {MAINTENANCE_STATES.map((s) => (
-                <button key={s} className={`status-chip ${m.state === s ? "on" : ""}`} onClick={() => setState(m.id, s)}>{s.replace("_", " ")}</button>
-              ))}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

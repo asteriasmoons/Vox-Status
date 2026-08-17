@@ -1,14 +1,19 @@
 /**
- * Telegram composer — lives inside the incident update editor.
+ * Telegram composer — target-agnostic.
  *
- * Purpose-built rich-text composer that produces Telegram-compatible HTML
- * (parse_mode: "HTML"). Each incident update owns its own Telegram message
- * so that a single incident can produce a sequence of independently-editable
- * Telegram posts as it progresses (Investigating → Identified → Monitoring
- * → Resolved).
+ * The composer only knows about a "target" whose current Telegram state
+ * looks the same for every kind of publishable item (incident updates,
+ * maintenance rows, etc.):
  *
- * All Telegram Bot API traffic runs through the Worker; this component only
- * ever sees the composed HTML + the returned message_id.
+ *   { html, button, message_id, sent_at, edited_at }
+ *
+ * The parent supplies a `generateDraft()` that produces the initial HTML
+ * for a fresh compose, and three async handlers (save / send / edit).
+ * The composer does the rich-text editing, preview, character count,
+ * button editor, and error handling.
+ *
+ * All Telegram Bot API traffic runs through the Worker; this component
+ * only ever sees the composed HTML + the returned message_id.
  */
 
 import React from "react";
@@ -16,70 +21,44 @@ import {
   Bold, Italic, Underline, Strikethrough, Link as LinkIcon, Code, FileCode2,
   Quote, EyeOff, List, ListOrdered, Send, Save, Loader2, Trash2,
 } from "lucide-react";
-import * as api from "./api";
-import type { IncidentRow, IncidentUpdateRow } from "./api";
+import type { TelegramButton } from "./api";
+
+export type TelegramTarget = {
+  /** Stable key for React and for effect deps. */
+  key: string;
+  /** Called on Reset — must return Telegram-compatible HTML. */
+  generateDraft: () => string;
+  /** Current stored state for this target. */
+  existing: {
+    html: string | null;
+    message_id: number | null;
+    sent_at: number | null;
+    edited_at: number | null;
+    button_text: string | null;
+    button_url: string | null;
+  };
+  save: (html: string, button: TelegramButton) => Promise<unknown>;
+  send: (html: string, button: TelegramButton) => Promise<unknown>;
+  edit: (html: string, button: TelegramButton) => Promise<unknown>;
+};
 
 type Props = {
-  incident: IncidentRow;
-  update: IncidentUpdateRow;
+  target: TelegramTarget;
+  /** Default URL for the auto-populated "View status" button on fresh drafts. */
   statusUrl: string;
   onChanged: () => Promise<void> | void;
   notify: (m: string) => void;
 };
 
 // ---------------------------------------------------------------------------
-// Draft generation. Uses the incident/update to build a sensible starting
-// point; the user then edits it in the toolbar before sending.
+// Shared helpers (also re-exported so callers can build their own drafts).
 // ---------------------------------------------------------------------------
 
-const STATE_META: Record<
-  string,
-  { emoji: string; label: string; blurb: (svc: string) => string }
-> = {
-  investigating: {
-    emoji: "🔴",
-    label: "Investigating",
-    blurb: (svc) => `We're investigating an issue affecting ${svc}.`,
-  },
-  identified: {
-    emoji: "🟠",
-    label: "Identified",
-    blurb: (svc) => `We've identified the cause of the current issue with ${svc} and are working on a fix.`,
-  },
-  monitoring: {
-    emoji: "🟡",
-    label: "Monitoring",
-    blurb: (svc) => `A fix has been deployed for the ${svc} issue and we're monitoring recovery.`,
-  },
-  resolved: {
-    emoji: "🟢",
-    label: "Resolved",
-    blurb: (svc) => `The ${svc} issue has been resolved and service is operating normally.`,
-  },
-};
-
-function escHtml(s: string): string {
+export function escHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
 }
 
-function generateDraft(incident: IncidentRow, update: IncidentUpdateRow): string {
-  // Prefer the update's label (Investigating / Identified / Monitoring /
-  // Resolved) — it's what actually describes this specific update. Fall
-  // back to the incident's overall state.
-  const key = (update.label || incident.state || "investigating").toLowerCase().trim();
-  const meta = STATE_META[key] ?? STATE_META[incident.state] ?? STATE_META.investigating;
-  const affected = parseAffected(incident.affected);
-  const service = affected[0] ?? "Vox";
-  const body = (update.message ?? "").trim() || meta.blurb(service);
-  // No inline "View status →" link — the CTA lives in the inline-keyboard
-  // button below the message (see the Button editor in the composer).
-  return (
-    `${meta.emoji} <b>${escHtml(service)} — ${escHtml(meta.label)}</b>\n` +
-    `${escHtml(body)}`
-  );
-}
-
-function parseAffected(raw: unknown): string[] {
+export function parseAffected(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw as string[];
   if (typeof raw === "string") {
     try {
@@ -116,8 +95,6 @@ function serialize(node: Node): string {
     case "p":
     case "div": {
       const inner = kids();
-      // Treat block containers as line separators. Trim trailing newline
-      // spam so multiple wrapped divs don't blow up spacing.
       return inner + (inner.endsWith("\n") ? "" : "\n");
     }
     case "b":
@@ -135,12 +112,10 @@ function serialize(node: Node): string {
       return `<s>${kids()}</s>`;
     case "a": {
       const href = (el.getAttribute("href") ?? "").trim();
-      // Only allow http(s) and tg: links to avoid javascript: injection.
       if (!/^(https?:|tg:|mailto:)/i.test(href)) return kids();
       return `<a href="${escHtml(href)}">${kids()}</a>`;
     }
     case "code":
-      // If inside <pre>, the outer <pre> handler will wrap; otherwise inline.
       if (el.parentElement && el.parentElement.tagName === "PRE") return kids();
       return `<code>${kids()}</code>`;
     case "pre":
@@ -170,14 +145,11 @@ function serialize(node: Node): string {
 
 function editorToTelegramHtml(root: HTMLElement): string {
   const out = Array.from(root.childNodes).map(serialize).join("");
-  // Collapse >2 blank lines and trim trailing whitespace.
   return out.replace(/\n{3,}/g, "\n\n").replace(/[ \t]+\n/g, "\n").trim();
 }
 
 // ---------------------------------------------------------------------------
 // Preview: render Telegram HTML back into safe DOM using the same whitelist.
-// This is a manual parser rather than dangerouslySetInnerHTML so we never
-// render an unexpected tag or attribute.
 // ---------------------------------------------------------------------------
 
 function renderPreview(html: string): React.ReactNode {
@@ -192,7 +164,6 @@ function renderNodes(nodes: NodeListOf<ChildNode> | ChildNode[], keyBase: number
   nodes.forEach((n, i) => {
     const key = `${keyBase}-${i}`;
     if (n.nodeType === Node.TEXT_NODE) {
-      // Split on newlines so \n renders as <br>.
       const text = n.textContent ?? "";
       const parts = text.split("\n");
       parts.forEach((p, j) => {
@@ -231,31 +202,29 @@ function renderNodes(nodes: NodeListOf<ChildNode> | ChildNode[], keyBase: number
 // Composer
 // ---------------------------------------------------------------------------
 
-export function TelegramComposer({ incident, update, statusUrl, onChanged, notify }: Props) {
+export function TelegramComposer({ target, statusUrl, onChanged, notify }: Props) {
   const editorRef = React.useRef<HTMLDivElement>(null);
-  const alreadySent = update.telegram_message_id != null;
+  const alreadySent = target.existing.message_id != null;
 
-  // The composed Telegram HTML (as returned by serialize). Kept as state so
-  // the preview and character count update live.
   const initial = React.useMemo(() => {
-    if (update.telegram_html && update.telegram_html.trim()) return update.telegram_html;
-    return generateDraft(incident, update);
-  }, [incident, update]);
+    if (target.existing.html && target.existing.html.trim()) return target.existing.html;
+    return target.generateDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target.key]);
+
   const [html, setHtml] = React.useState<string>(initial);
   const [busy, setBusy] = React.useState<"send" | "edit" | "save" | null>(null);
   const [error, setError] = React.useState<string>("");
   const [dirty, setDirty] = React.useState(false);
 
-  // Inline-keyboard button. Defaults to a "View status" button pointed at
-  // the status page — the user can rename it, change the URL, or clear both
-  // fields to send the message with no button attached.
-  const initialButtonText = update.telegram_button_text
-    ?? (update.telegram_message_id == null ? "View status" : "");
-  const initialButtonUrl = update.telegram_button_url
-    ?? (update.telegram_message_id == null ? statusUrl : "");
+  const initialButtonText =
+    target.existing.button_text ?? (alreadySent ? "" : "View status");
+  const initialButtonUrl =
+    target.existing.button_url ?? (alreadySent ? "" : statusUrl);
   const [buttonText, setButtonText] = React.useState<string>(initialButtonText);
   const [buttonUrl, setButtonUrl]   = React.useState<string>(initialButtonUrl);
-  const buttonPayload = React.useMemo(() => ({
+
+  const buttonPayload = React.useMemo<TelegramButton>(() => ({
     telegram_button_text: buttonText.trim() ? buttonText.trim() : null,
     telegram_button_url:  buttonUrl.trim()  ? buttonUrl.trim()  : null,
   }), [buttonText, buttonUrl]);
@@ -264,14 +233,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
     (buttonUrl.trim() && !buttonText.trim()) ||
     (buttonUrl.trim() && !/^(https?:\/\/|tg:\/\/)/i.test(buttonUrl.trim()));
 
-  function onButtonChange(next: { text?: string; url?: string }) {
-    if (next.text !== undefined) setButtonText(next.text);
-    if (next.url  !== undefined) setButtonUrl(next.url);
-    setDirty(true);
-  }
-
-  // Seed the contentEditable once from the initial HTML (which is Telegram
-  // HTML — the tag whitelist is a subset of what the browser will render).
+  // Seed the contentEditable once from the initial HTML.
   React.useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML === "") {
       editorRef.current.innerHTML = initial;
@@ -287,9 +249,6 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
   }
 
   function exec(cmd: string, value?: string) {
-    // execCommand is deprecated but still the most reliable way to apply
-    // inline formatting to a selection inside contentEditable across
-    // browsers. We only use it for the basic inline styles.
     document.execCommand("styleWithCSS", false, "false");
     document.execCommand(cmd, false, value);
     onEditorInput();
@@ -310,7 +269,6 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
       wrapper.appendChild(contents);
     }
     range.insertNode(wrapper);
-    // Reselect the wrapped content.
     const newRange = document.createRange();
     newRange.selectNodeContents(wrapper);
     sel.removeAllRanges();
@@ -331,51 +289,43 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
       return;
     }
     setError("");
-    // Use execCommand so it handles the current selection (or inserts anchor
-    // at the cursor if nothing is selected).
     exec("createLink", url);
   }
 
   async function onSaveDraft() {
     setBusy("save"); setError("");
     try {
-      await api.saveTelegramDraft(incident.id, update.id, html, buttonPayload);
+      await target.save(html, buttonPayload);
       setDirty(false);
       notify("Telegram draft saved");
       await onChanged();
     } catch (e: any) {
       setError(e?.message ?? "Failed to save draft.");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function onSend() {
     setBusy("send"); setError("");
     try {
-      await api.sendTelegramUpdate(incident.id, update.id, html, buttonPayload);
+      await target.send(html, buttonPayload);
       setDirty(false);
       notify("Sent to Telegram");
       await onChanged();
     } catch (e: any) {
       setError(e?.message ?? "Failed to send.");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function onEdit() {
     setBusy("edit"); setError("");
     try {
-      await api.editTelegramUpdate(incident.id, update.id, html, buttonPayload);
+      await target.edit(html, buttonPayload);
       setDirty(false);
       notify("Telegram message updated");
       await onChanged();
     } catch (e: any) {
       setError(e?.message ?? "Failed to edit.");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   const length = html.length;
@@ -385,7 +335,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
     <div className="tg-composer">
       <div className="tg-composer-head">
         <span className="tg-label">Telegram message</span>
-        <TelegramStatus update={update} />
+        <TelegramStatus existing={target.existing} />
       </div>
 
       <div className="tg-toolbar" role="toolbar" aria-label="Telegram formatting">
@@ -408,7 +358,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
           className="tg-tool tg-tool-text"
           title="Reset to generated draft"
           onClick={() => {
-            const draft = generateDraft(incident, update);
+            const draft = target.generateDraft();
             if (editorRef.current) editorRef.current.innerHTML = draft;
             setHtml(draft);
             setButtonText("View status");
@@ -439,7 +389,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
             type="text"
             placeholder="Button label — e.g. View status"
             value={buttonText}
-            onChange={(e) => onButtonChange({ text: e.target.value })}
+            onChange={(e) => { setButtonText(e.target.value); setDirty(true); }}
             aria-label="Inline button label"
           />
           <input
@@ -447,7 +397,7 @@ export function TelegramComposer({ incident, update, statusUrl, onChanged, notif
             type="url"
             placeholder="https://…"
             value={buttonUrl}
-            onChange={(e) => onButtonChange({ url: e.target.value })}
+            onChange={(e) => { setButtonUrl(e.target.value); setDirty(true); }}
             aria-label="Inline button URL"
           />
           <button
@@ -541,8 +491,6 @@ function TbBtn({ title, onClick, children }: { title: string; onClick: () => voi
       className="tg-tool"
       title={title}
       aria-label={title}
-      // Prevent the button from stealing focus and collapsing the current
-      // selection inside the contentEditable before the command runs.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
     >
@@ -551,12 +499,12 @@ function TbBtn({ title, onClick, children }: { title: string; onClick: () => voi
   );
 }
 
-function TelegramStatus({ update }: { update: IncidentUpdateRow }) {
-  if (update.telegram_message_id == null) {
+function TelegramStatus({ existing }: { existing: TelegramTarget["existing"] }) {
+  if (existing.message_id == null) {
     return <span className="tg-badge tg-badge-off">○ Not sent</span>;
   }
-  const sent = update.telegram_sent_at ? new Date(update.telegram_sent_at * 1000) : null;
-  const edited = update.telegram_edited_at ? new Date(update.telegram_edited_at * 1000) : null;
+  const sent = existing.sent_at ? new Date(existing.sent_at * 1000) : null;
+  const edited = existing.edited_at ? new Date(existing.edited_at * 1000) : null;
   const fmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   return (
     <span className="tg-badge tg-badge-on">

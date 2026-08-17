@@ -18,5 +18,15 @@
 ALTER TABLE incident_updates ADD COLUMN telegram_button_text  TEXT;
 ALTER TABLE incident_updates ADD COLUMN telegram_button_url   TEXT;
 
+-- Telegram publishing on maintenance rows. Same shape as incident_updates,
+-- but attached directly to the maintenance row (maintenance doesn't have a
+-- separate "updates" table — the row itself is the announcement).
+ALTER TABLE maintenance ADD COLUMN telegram_html         TEXT;
+ALTER TABLE maintenance ADD COLUMN telegram_message_id   INTEGER;
+ALTER TABLE maintenance ADD COLUMN telegram_sent_at      INTEGER;
+ALTER TABLE maintenance ADD COLUMN telegram_edited_at    INTEGER;
+ALTER TABLE maintenance ADD COLUMN telegram_button_text  TEXT;
+ALTER TABLE maintenance ADD COLUMN telegram_button_url   TEXT;
+
 INSERT OR IGNORE INTO settings (key, value)
   VALUES ('status_url', 'https://status.voxiverse.ink');

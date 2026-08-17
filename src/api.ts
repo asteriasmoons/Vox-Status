@@ -166,6 +166,31 @@ export const editTelegramUpdate = (
     { method: "POST", body: JSON.stringify({ telegram_html, ...button }) },
   );
 
+// --- Telegram (per maintenance row) ---
+export const saveMaintenanceTelegramDraft = (
+  maintenanceId: number, telegram_html: string, button: TelegramButton = {},
+) =>
+  req<{ ok: true }>(`/api/maintenance/${maintenanceId}/telegram`, {
+    method: "PATCH",
+    body: JSON.stringify({ telegram_html, ...button }),
+  });
+
+export const sendMaintenanceTelegram = (
+  maintenanceId: number, telegram_html: string, button: TelegramButton = {},
+) =>
+  req<{ ok: true; telegram_message_id: number; telegram_sent_at: number }>(
+    `/api/maintenance/${maintenanceId}/telegram/send`,
+    { method: "POST", body: JSON.stringify({ telegram_html, ...button }) },
+  );
+
+export const editMaintenanceTelegram = (
+  maintenanceId: number, telegram_html: string, button: TelegramButton = {},
+) =>
+  req<{ ok: true; telegram_edited_at: number }>(
+    `/api/maintenance/${maintenanceId}/telegram/edit`,
+    { method: "POST", body: JSON.stringify({ telegram_html, ...button }) },
+  );
+
 // --- Maintenance ---
 export type MaintenanceRow = {
   id: number;
@@ -175,6 +200,12 @@ export type MaintenanceRow = {
   window_end: string | null;
   state: MaintenanceState;
   affected: string;
+  telegram_html: string | null;
+  telegram_message_id: number | null;
+  telegram_sent_at: number | null;
+  telegram_edited_at: number | null;
+  telegram_button_text: string | null;
+  telegram_button_url: string | null;
 };
 export const getMaintenance = () => req<{ maintenance: MaintenanceRow[] }>("/api/maintenance");
 export const createMaintenance = (body: {

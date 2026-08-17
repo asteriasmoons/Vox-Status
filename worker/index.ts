@@ -221,7 +221,7 @@ async function buildSnapshot(env: Env) {
         "SELECT id, incident_id, label, time, message, telegram_message_id, telegram_sent_at, telegram_edited_at FROM incident_updates ORDER BY sort_order, id",
       ).all(),
       env.DB.prepare(
-        "SELECT id, title, body, window_start, window_end, state, affected FROM maintenance ORDER BY created_at DESC, id DESC",
+        "SELECT id, title, body, window_start, window_end, state, affected, telegram_message_id, telegram_sent_at, telegram_edited_at FROM maintenance ORDER BY created_at DESC, id DESC",
       ).all(),
       env.DB.prepare("SELECT key, value FROM settings").all(),
     ]);
@@ -267,6 +267,11 @@ async function buildSnapshot(env: Env) {
     windowEnd: m.window_end as string | null,
     state: m.state as string,
     affected: parseJsonArray(m.affected as string),
+    // Same shape as incident updates: expose only the sent/edited state and
+    // timestamps publicly, never the raw Telegram HTML or message id.
+    telegramSent: m.telegram_message_id != null,
+    telegramSentAt: (m.telegram_sent_at as number | null) ?? null,
+    telegramEditedAt: (m.telegram_edited_at as number | null) ?? null,
   }));
 
   const settings: Record<string, string> = {};
@@ -544,9 +549,118 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   // --- Maintenance ---
   if (path === "/api/maintenance" && method === "GET") {
     const rows = await env.DB.prepare(
-      "SELECT id, title, body, window_start, window_end, state, affected, created_at FROM maintenance ORDER BY created_at DESC, id DESC",
+      "SELECT id, title, body, window_start, window_end, state, affected, created_at, telegram_html, telegram_message_id, telegram_sent_at, telegram_edited_at, telegram_button_text, telegram_button_url FROM maintenance ORDER BY created_at DESC, id DESC",
     ).all();
     return json({ maintenance: rows.results });
+  }
+
+  // --- Telegram publishing (per maintenance row) ---
+  // Same pattern as the incident-update endpoints above. Auth-gated;
+  // BOT_TOKEN + TELEGRAM_CHANNEL_ID stay server-side.
+  const mtgSaveMatch = path.match(/^\/api\/maintenance\/(\d+)\/telegram$/);
+  if (mtgSaveMatch && method === "PATCH") {
+    const mId = Number(mtgSaveMatch[1]);
+    const b = await readBody<{
+      telegram_html?: string;
+      telegram_button_text?: string | null;
+      telegram_button_url?: string | null;
+    }>(request);
+    if (typeof b.telegram_html !== "string") {
+      return json({ error: "telegram_html is required" }, { status: 400 });
+    }
+    await env.DB.prepare(
+      "UPDATE maintenance SET telegram_html = ?, telegram_button_text = ?, telegram_button_url = ? WHERE id = ?",
+    ).bind(
+      b.telegram_html,
+      b.telegram_button_text ?? null,
+      b.telegram_button_url ?? null,
+      mId,
+    ).run();
+    return json({ ok: true });
+  }
+
+  const mtgSendMatch = path.match(/^\/api\/maintenance\/(\d+)\/telegram\/send$/);
+  if (mtgSendMatch && method === "POST") {
+    const mId = Number(mtgSendMatch[1]);
+    const b = await readBody<{
+      telegram_html?: string;
+      disable_link_preview?: boolean;
+      telegram_button_text?: string | null;
+      telegram_button_url?: string | null;
+    }>(request);
+    const html = (b.telegram_html ?? "").trim();
+    if (!html) return json({ error: "Telegram message is empty." }, { status: 400 });
+    if (html.length > 4096) return json({ error: "Telegram message exceeds 4096 characters." }, { status: 400 });
+
+    const buttonText = (b.telegram_button_text ?? "").trim() || null;
+    const buttonUrl  = (b.telegram_button_url ?? "").trim() || null;
+    if ((buttonText && !buttonUrl) || (buttonUrl && !buttonText)) {
+      return json({ error: "Button text and URL must both be set, or both empty." }, { status: 400 });
+    }
+    if (buttonUrl && !/^https?:\/\//i.test(buttonUrl) && !/^tg:\/\//i.test(buttonUrl)) {
+      return json({ error: "Button URL must start with http(s):// or tg://." }, { status: 400 });
+    }
+
+    const existing = await env.DB.prepare(
+      "SELECT id, telegram_message_id FROM maintenance WHERE id = ?",
+    ).bind(mId).first<{ id: number; telegram_message_id: number | null }>();
+    if (!existing) return json({ error: "Maintenance not found." }, { status: 404 });
+    if (existing.telegram_message_id != null) {
+      return json({ error: "This maintenance has already been sent to Telegram. Use edit instead." }, { status: 409 });
+    }
+
+    const tg = await telegramSend(env, html, b.disable_link_preview ?? true, { text: buttonText, url: buttonUrl });
+    if (!tg.ok) return json({ error: `Telegram: ${tg.error}` }, { status: 502 });
+
+    const sentAt = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      "UPDATE maintenance SET telegram_html = ?, telegram_message_id = ?, telegram_sent_at = ?, telegram_edited_at = NULL, telegram_button_text = ?, telegram_button_url = ? WHERE id = ?",
+    ).bind(html, tg.messageId, sentAt, buttonText, buttonUrl, mId).run();
+
+    return json({ ok: true, telegram_message_id: tg.messageId, telegram_sent_at: sentAt });
+  }
+
+  const mtgEditMatch = path.match(/^\/api\/maintenance\/(\d+)\/telegram\/edit$/);
+  if (mtgEditMatch && method === "POST") {
+    const mId = Number(mtgEditMatch[1]);
+    const b = await readBody<{
+      telegram_html?: string;
+      disable_link_preview?: boolean;
+      telegram_button_text?: string | null;
+      telegram_button_url?: string | null;
+    }>(request);
+    const html = (b.telegram_html ?? "").trim();
+    if (!html) return json({ error: "Telegram message is empty." }, { status: 400 });
+    if (html.length > 4096) return json({ error: "Telegram message exceeds 4096 characters." }, { status: 400 });
+
+    const buttonText = (b.telegram_button_text ?? "").trim() || null;
+    const buttonUrl  = (b.telegram_button_url ?? "").trim() || null;
+    if ((buttonText && !buttonUrl) || (buttonUrl && !buttonText)) {
+      return json({ error: "Button text and URL must both be set, or both empty." }, { status: 400 });
+    }
+    if (buttonUrl && !/^https?:\/\//i.test(buttonUrl) && !/^tg:\/\//i.test(buttonUrl)) {
+      return json({ error: "Button URL must start with http(s):// or tg://." }, { status: 400 });
+    }
+
+    const existing = await env.DB.prepare(
+      "SELECT telegram_message_id FROM maintenance WHERE id = ?",
+    ).bind(mId).first<{ telegram_message_id: number | null }>();
+    if (!existing) return json({ error: "Maintenance not found." }, { status: 404 });
+    if (existing.telegram_message_id == null) {
+      return json({ error: "This maintenance has not been sent to Telegram yet." }, { status: 409 });
+    }
+
+    const tg = await telegramEdit(env, existing.telegram_message_id, html, b.disable_link_preview ?? true, {
+      text: buttonText, url: buttonUrl,
+    });
+    if (!tg.ok) return json({ error: `Telegram: ${tg.error}` }, { status: 502 });
+
+    const editedAt = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      "UPDATE maintenance SET telegram_html = ?, telegram_edited_at = ?, telegram_button_text = ?, telegram_button_url = ? WHERE id = ?",
+    ).bind(html, editedAt, buttonText, buttonUrl, mId).run();
+
+    return json({ ok: true, telegram_edited_at: editedAt });
   }
 
   if (path === "/api/maintenance" && method === "POST") {

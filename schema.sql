@@ -56,14 +56,21 @@ CREATE TABLE incident_updates (
 );
 
 CREATE TABLE maintenance (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  title        TEXT    NOT NULL,
-  body         TEXT    NOT NULL DEFAULT '',
-  window_start TEXT,
-  window_end   TEXT,
-  state        TEXT    NOT NULL DEFAULT 'scheduled',     -- scheduled | in_progress | completed
-  affected     TEXT    NOT NULL DEFAULT '[]',
-  created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  title                 TEXT    NOT NULL,
+  body                  TEXT    NOT NULL DEFAULT '',
+  window_start          TEXT,
+  window_end            TEXT,
+  state                 TEXT    NOT NULL DEFAULT 'scheduled',     -- scheduled | in_progress | completed
+  affected              TEXT    NOT NULL DEFAULT '[]',
+  created_at            INTEGER NOT NULL DEFAULT (unixepoch()),
+  -- Telegram publishing (see schema.telegram.sql).
+  telegram_html         TEXT,
+  telegram_message_id   INTEGER,
+  telegram_sent_at      INTEGER,
+  telegram_edited_at    INTEGER,
+  telegram_button_text  TEXT,
+  telegram_button_url   TEXT
 );
 
 CREATE TABLE templates (
